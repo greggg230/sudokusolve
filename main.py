@@ -242,5 +242,3 @@ class EliminationBackTrackSolver(SimpleEliminationSolver):
                                 if new_solver.grid.is_solved():
                                     self.grid = new_solver.grid
                                     return
-                                else:
-                                    print("Shit weren't solved")
