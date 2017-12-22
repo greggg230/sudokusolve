@@ -1,5 +1,7 @@
 import math
 
+from random import shuffle
+
 
 ez_puzzle = [
     [9, 1, 5, None, None, 6, None, None, None],
@@ -49,6 +51,18 @@ evil_puzzle = [
     [None, 3, 4, None, 8, None, None, None, None]
 ]
 
+hardest_puzzle = [
+    [8, None, None, None, None, None, None, None, None],
+    [None, None, 3, 6, None, None, None, None, None],
+    [None, 7, None, None, 9, None, 2, None, None],
+    [None, 5, None, None, None, 7, None, None, None],
+    [None, None, None, None, 4, 5, 7, None, None],
+    [None, None, None, 1, None, None, None, 3, None],
+    [None, None, 1, None, None, None, None, 6, 8],
+    [None, None, 8, 5, None, None, None, 1, None],
+    [None, 9, None, None, None, None, 4, None, None]
+]
+
 
 class BustedSudokuException(Exception):
     pass
@@ -86,9 +100,10 @@ class SudokuCell:
 
 
 class SudokuGrid:
-    def __init__(self, values):
+    def __init__(self, values, solve_state):
         self.cells = []
         self.groups = []
+        self.solve_state = solve_state
         for i in range(9):
             self.groups.append([])
         for y, row in enumerate(values):
@@ -123,7 +138,7 @@ class SudokuGrid:
             for x, cell in enumerate(row):
                 new_row.append(cell.value)
             values.append(new_row)
-        return SudokuGrid(values)
+        return SudokuGrid(values, self.solve_state)
 
     def get_col_values(self, x, exclude=None):
         vals = set([])
@@ -134,6 +149,12 @@ class SudokuGrid:
             if target_cell.value:
                 vals.add(target_cell.value)
         return vals
+
+    def get_hash(self):
+        toutput = []
+        for row in self.cells:
+            toutput.append(tuple([f.value for f in row]))
+        return tuple(toutput).__hash__()
 
     def get_grp_values(self, group_num, exclude=None):
         vals = set([])
@@ -160,6 +181,8 @@ class SudokuGrid:
         return True
 
     def validate(self):
+        if self.get_hash() in self.solve_state.dead_hashes:
+            raise BustedSudokuException("Found cached dead hash.")
         # Validate rows
         for row in self.cells:
             found_possibilities = set([])
@@ -203,42 +226,72 @@ class SimpleEliminationSolver:
                         return
             if not changed:
                 break
-        print("Iterations to maximally simplify: {0}".format(i))
+
+
+class SolveState:
+    def __init__(self):
+        self.dead_hashes = set([])
+
+    def add_hash(self, new_hash):
+        self.dead_hashes.add(new_hash)
 
 
 class EliminationBackTrackSolver(SimpleEliminationSolver):
-    def __init__(self, grid, depth=0):
+    def __init__(self, grid, solve_state, max_depth=2, depth=0):
         self.grid = grid
+        self.solve_state = solve_state
         self.depth = depth
+        self.max_depth = max_depth
 
     def solve(self):
         super().solve()
-        if self.grid.is_solved() or self.depth >= 2:
+        if self.grid.is_solved() or self.depth >= self.max_depth:
             return
         # Get the cell with the fewest possibilities and guess.
-        for _ in range(10):
-            # self.grid.display()
-            guess_cell = None
+        for d in range(2, 4):
             for i in range(2, 6):
-                for row in self.grid.cells:
-                    for guess_cell in row:
-                        if len(guess_cell.possibilities) == i:
-                            guess = list(guess_cell.possibilities)[0]
-                            duplicate_grid = self.grid.duplicate()
-                            new_target_cell = duplicate_grid.cells[
-                                guess_cell.y][guess_cell.x]
-                            new_target_cell.value = guess
-                            new_target_cell.possibilities = {guess}
-                            new_solver = EliminationBackTrackSolver(
-                                duplicate_grid, self.depth + 1)
-                            try:
-                                duplicate_grid.validate()
-                                new_solver.solve()
-                            except BustedSudokuException as e:
-                                print(e)
-                                # We know that's not a valid guess, then.
-                                guess_cell.possibilities.remove(guess)
-                            else:
-                                if new_solver.grid.is_solved():
-                                    self.grid = new_solver.grid
-                                    return
+                for _ in range(1):
+                    changed = False
+                    for row in self.grid.cells:
+                        for guess_cell in row:
+                            if len(guess_cell.possibilities) == i:
+                                found = False
+                                for guess in guess_cell.possibilities:
+                                    duplicate_grid = self.grid.duplicate()
+                                    new_target_cell = duplicate_grid.cells[
+                                        guess_cell.y][guess_cell.x]
+                                    new_target_cell.value = guess
+                                    new_target_cell.possibilities = {guess}
+                                    if self.is_valid_grid(duplicate_grid):
+                                        found = True
+                                        break
+                                if not found:
+                                    continue
+                                new_solver = EliminationBackTrackSolver(
+                                    duplicate_grid,
+                                    self.solve_state,
+                                    max_depth=d,
+                                    depth=self.depth + 1)
+                                try:
+                                    duplicate_grid.validate()
+                                    new_solver.solve()
+                                except BustedSudokuException as e:
+                                    print(e)
+                                    # We know that's not a valid guess, then.
+                                    self.solve_state.add_hash(
+                                        duplicate_grid.get_hash())
+                                    print(len(self.solve_state.dead_hashes))
+                                    changed = True
+                                    guess_cell.possibilities.remove(guess)
+                                    if len(guess_cell.possibilities) == 1:
+                                        guess_cell.value = list(
+                                            guess_cell.possibilities)[0]
+                                else:
+                                    if new_solver.grid.is_solved():
+                                        self.grid = new_solver.grid
+                                        return
+                    if not changed:
+                        break
+
+    def is_valid_grid(self, grid):
+        return grid.get_hash() not in self.solve_state.dead_hashes
